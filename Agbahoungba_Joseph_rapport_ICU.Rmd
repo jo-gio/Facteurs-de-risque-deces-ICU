@@ -1,0 +1,146 @@
+---
+title: "Facteurs associés au décès chez les patients admis en soins intensifs"
+author: "Giovanni Agbahoungba"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+---
+# Introduction, formulation du problème et spécification du modèle 
+
+Cette étude s’inscrit dans le cadre de l’analyse de la survie des patients admis en unité de soins intensifs. L’objectif est d’identifier les facteurs associés au risque de décès à partir des caractéristiques sociodémographiques, cliniques et physiologiques recueillies à l’admission. La variable d’intérêt est le décès (oui/non), ce qui justifie l’utilisation d’un modèle de régression logistique binaire afin d’estimer l’association entre les facteurs étudiés et la probabilité de décès. Les effets des variables explicatives furent quantifiées à l’aide des odds ratios et de leurs intervalles de confiance à 95 %, permettant d’identifier les principaux déterminants du risque de décès après ajustement.
+
+# Importation des doonées et traitement et formatage
+
+Nous avions importé le jeu de données relatives aux décès et avions traité les données manquants
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ROCR)
+library(summarytools)
+library(gtsummary)
+library(ggplot2)
+library(GGally)
+library(pROC)
+library(gtsummary)
+
+# Importation des données et passage en facteurs ----
+ICU <- read.csv2("C:/Users/admin/Downloads/M1_DSS/BCC3/UE2_Statistiques_données_massives_de_santé/Modelisation_statistique_1/Dossier régression logistique (ICU)-20251017/ICU.csv", stringsAsFactors=TRUE)
+#Correction valeur aberrante "10" au niveau de la variable chirugie 
+ICU$CHIR_MED[143]=1
+
+```
+
+
+# Description des variables
+Au total, treize variables dont sept quantitaives et six qualitatives contituent le jeu de données. Les patients admis aux soins intentsifs et enrolés dans l'étude étaient majoritairement de sexe féminin (63 %) et admis en chirurgie (52 %)- Leurs âges médian était de 64 ans (min-max : 16-92). Le tableau ci-après résume la descritption de l'ensemble des variables de cette étude.
+
+```{r}
+# Première étape : stats descriptives ----
+print(dfSummary(ICU))
+```
+
+# Analyse univariée 
+
+Nous avions réalisé une anlayse univariée consistant à croiser chaque variable indépendante avec la variable dépendante. Les variables associés au décès au seuil de 25 % ont été retenus pour construire le premier modèle de regression logistique. Il s'agissait de l'âge, la chirurgie subie, l'infection le jour d'admission, la tension artérielle systolique, l'admission en urgence, le ph, le paramètre biologique (bicar), l'état de conscience et le score de glasgow.
+
+```{r }
+
+#croissement de la variable dépendante avec chaque vaiable dépendant ave tests statistiques adaptés
+tab1 = tbl_summary(ICU, by = DECEDE) %>%
+  add_p(test = list(
+    all_continuous() ~ "t.test",
+    all_categorical() ~ "fisher.test"))
+tab1
+
+#Sélection des variables candidates associées au décès en analyse univariée
+vars_sel = tab1$table_body |>
+  dplyr::filter(!is.na(p.value)) |>
+  dplyr::filter(p.value <= 0.25) |>
+  dplyr::pull(variable) |>
+  unique()
+
+#construction du modèle de regression logistique
+form <- as.formula(paste("DECEDE ~", paste(vars_sel, collapse = " + ")))
+
+```
+
+
+# Estimation des paramètres du modèle de regression logistique
+
+```{r}
+fit <- glm(form, data = ICU, family = binomial)
+tbl_regression(fit, exponentiate = TRUE)
+```
+
+
+# Selection automatique des variables (stepwise), interpretation du modèle obtenu 
+
+Une sélection pas à pas a été réalisée afin d’obtenir un modèle parcimonieux. Seul le résultats du modèle final obtenu après la préocédure est présenté.
+
+```{r}
+fit1 <- step(fit,trace = 0)
+summary(fit1)
+tbl_regression(fit1, exponentiate = TRUE)
+```
+
+# Evaluation du modèle et seuil de prédiction 
+
+```{r}
+
+#Test de wald et rapport de vraissemblance 
+summary(fit1)  # Wald
+anova(fit1, test = "Chisq")  # LR test
+
+#Évaluer le modèle : AIC, Déviance 
+AIC(fit1)
+fit1$deviance
+fit1$null.deviance
+
+#Courbe ROC
+prob <- fitted(fit1)
+roc_obj <- roc(ICU$DECEDE, prob)
+auc(roc_obj)
+plot(roc_obj, col = "blue", lwd = 2)
+
+
+#Matrice de confusion 
+pred_class <- ifelse(prob > 0.5, 1, 0)
+table(Prediction = pred_class, Observed = ICU$DECEDE)
+
+```
+
+### Tests statisiques de Wald et le raport de vraissemblance 
+
+A l'issue de la procédure stepwise, le modèle obtenu contient cinq variables dont trois (l'âge, l'admission en urgence, l'état de conscience) présentent une association signification au décès ajusté aux autres variables et deux (la tension artérille systolique et le ph) n'en présentent pas : test de wald. Le test du rapport de vraissemblance confirme l'imortance des variables associées. 
+
+### Quaité gloale du modèle 
+
+Il y a eu une forte résuction de la déviance (de 296 à 217), ce qui suggère que le modèle explique bien la variabilitté du déès. De même le modèle obtenu est le plus optimal selon le critère d'information AIC =229,06 à l'issue de la procédure stepwise
+
+### Performance discirminante 
+
+AUC = 0,842 : le modèle distingue bien les survivants des décédés.
+
+### Matrice de confusion
+
+Le modèle identifie très bien les survivants, mais manque de sensibilité pour détecter tous les décès.
+
+
+
+
+# Interpretation et synthèse 
+
+AGE :Coefficient positif et très significatif (p < 0.001). Chaque année supplémentaire augmente les odds de décès d’environ 3,6 % (OR ≈ exp(0.035) ≈ 1.036). L’âge est un facteur de risque important et robuste.
+
+TA_SYS (tension artérielle systolique) : Coefficient négatif, borderline (OR= 0,99 ; p ≈ 0.08). Une tension plus basse tend à augmenter le risque de décès, mais l’effet reste modéré et incertain.
+
+URG_NURG (admission en urgence vs non-urgence) : très significatif (Or=6,33 ; p = 0.001). Les patients admis en urgence ont un risque de décès environ 6 fois plus élevé. C’est un des facteurs les plus marquants du modèle.
+
+PH : coefficient négatif, non significatif (p ≈ 0.06). Un pH bas (acidose) est associé à un risque fortement accru de décès, même si la significativité statistique est limite. L’effet est biologiquement cohérent.
+
+CONSC (état de conscience altéré) : très significatif (OR=1,54 ; p < 0.0001). Une altération de la conscience multiplie par environ 4,7 les odds de décès. C’est un facteur majeur du modèle.
+
